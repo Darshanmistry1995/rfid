@@ -5,7 +5,6 @@
 #include <QTextStream>
 #include "mfrc522.h"
 
-
 class Worker : public QObject
 {
     Q_OBJECT

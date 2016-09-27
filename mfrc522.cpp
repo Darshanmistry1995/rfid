@@ -1,19 +1,41 @@
 #include "mfrc522.h"
 
-MFRC522::MFRC522(QObject *parent, QString portName) :   QObject(parent)
+MFRC522::MFRC522(QObject *parent) :   QObject(parent)
 {
-    sp.setDeviceName(portName);
-    QTextStream out(stdout);
+    PCD_Reset();
+    usleep(100000);
 
-    if (sp.open(QIODevice::ReadWrite | QIODevice::Unbuffered))
-    {        
-        sp.setBaudRate(AbstractSerial::BaudRate9600);
-        sp.setDataBits(AbstractSerial::DataBits8);
-        sp.setParity(AbstractSerial::ParityNone);
-        sp.setFlowControl(AbstractSerial::FlowControlOff);
-        sp.setStopBits(AbstractSerial::StopBits1);
+// setup spi params
+    spiMode = 0; spiBits=8; spiSpeed=1000000;
+    if((spiFd=open(SPI_PATH, O_RDWR))<0) perror("ERR: SPI can't open device");
+    if(ioctl(spiFd,SPI_IOC_WR_MODE, &spiMode)==-1) perror("ERR: SPI cant set mode");
+    if(ioctl(spiFd,SPI_IOC_RD_MODE, &spiMode)==-1) perror("ERR: SPI cant get mode");
+    if(ioctl(spiFd,SPI_IOC_WR_BITS_PER_WORD, &spiBits)==-1) perror("ERR: SPI cant set bits");
+    if(ioctl(spiFd,SPI_IOC_RD_BITS_PER_WORD, &spiBits)==-1) perror("ERR: SPI cant get bits");
+    if(ioctl(spiFd,SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed)==-1) perror("ERR: SPI cant set speed");
+    if(ioctl(spiFd,SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed)==-1) perror("ERR: SPI cant get speed");
 
+    printf("SPI  mode=%d\r\n", spiMode);
+    printf("SPI  bits=%d\r\n", spiBits);
+    printf("SPI  speed=%d\r\n", spiSpeed);
+}
+
+int MFRC522::transfer(int fd, byte send[], byte receive[], int length)
+{
+    struct spi_ioc_transfer transfer; // the transfer structure
+    transfer.tx_buf = (unsigned long) send;
+    transfer.rx_buf = (unsigned long) receive;
+    transfer.len = length;
+    transfer.speed_hz = 1000000;
+    transfer.bits_per_word = 8;
+    transfer.delay_usecs = 0;
+    //send SPI message ( all of the aboove fields)
+    int status = ioctl(fd, SPI_IOC_MESSAGE(1), & transfer);
+    if(status < 0) {
+        perror ("SPI: SPI_IOC_MESSAGE failed");
+        return -1;
     }
+    return status;
 }
 
 
@@ -26,23 +48,10 @@ MFRC522::MFRC522(QObject *parent, QString portName) :   QObject(parent)
  */
 void MFRC522::PCD_WriteRegister(byte reg, byte value)
 {
-    QTextStream out(stdout);
-    out << "     PCD_WriteRegister:reg=0x" << QString::number(reg,16) << " value=0x" << QString::number(value,16) << endl;
-    QByteArray ba;
-    ba.resize(1);
-    ba[0] = reg;				// MSB == 0 is for writing.
-    sp.write(ba,1);
-    while (true) {
-        if(sp.bytesAvailable(false)>0)
-        {
-            sp.readAll();
-            break;
-        }
-        if(time.elapsed()>10) break;
-    }
-
-    ba[0] = value;
-    sp.write(ba,1);
+    byte tx[2];
+    tx[0] = (reg & 0x7E);					// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
+    tx[1] = value;
+    transfer(spiFd, tx, NULL, 2);
 }
 
 
@@ -53,19 +62,18 @@ void MFRC522::PCD_WriteRegister(	byte reg,		///< The register to write to. One o
                                     byte count,		///< The number of bytes to write to the register
                                     byte *values	///< The values to write. Byte array.
                                 ) {
-    QTextStream out(stdout);
-    out << "   PCD_WriteRegister N :reg=" << QString::number(reg,16) << " count=" << QString::number(count) << endl;
-    byte n;
-    byte addr = reg;
+    byte *tx;
 
-    for(n=0 ; n!=count ; n++)
+    tx = new byte[count+1];
+    if(tx==NULL)
     {
-        PCD_WriteRegister(addr, values[n]);
-       // addr++;
+        perror("ERR: cant allocate memory for tx in PCD_WriteRegister\r\n");
+        return;
     }
-
-    out << "   PCD_WriteRegister N - END" << endl;
-
+    tx[0] = reg & 0x7E;		// MSB == 0 is for writing. LSB is not used in address. Datasheet section 8.1.2.3.
+    memcpy(&tx[1], values, count);
+    transfer(spiFd,tx,NULL,count+1);
+    delete[] tx;
 } // End PCD_WriteRegister()
 
 
@@ -74,29 +82,14 @@ void MFRC522::PCD_WriteRegister(	byte reg,		///< The register to write to. One o
  */
 byte MFRC522::PCD_ReadRegister(byte reg)
 {
-
-    QByteArray ba;
     byte value;
-    QTextStream out(stdout);
-    out << "     PCD_ReadRegister:reg=0x" << QString::number(reg,16) ;
+    byte tx[2], rx[2];
 
-    ba.resize(1);
-    ba[0] = (0x80 | reg);
-    sp.write(ba,1);
-    time.start();
-    while (true) {
-        if(sp.bytesAvailable(false)>0)
-        {
-            ba=sp.readAll();
-            value = ba[0];
-            out << " value=0x" << QString::number(value,16) << endl;
-            return value;
-        }
-        if(time.elapsed()>12) break;
-    }
-
-    out << " value=0 ERR:timeout"  << endl;
-    return 0;
+    tx[0] = (0x80 | (reg & 0x7E));
+    tx[1]=0;
+    transfer(spiFd,tx,rx,2);
+    value = rx[1];
+    return value;
 }
 
 
@@ -109,32 +102,33 @@ void MFRC522::PCD_ReadRegister(	byte reg,		///< The register to read from. One o
                                 byte *values,	///< Byte array to store the values in.
                                 byte rxAlign	///< Only bit positions rxAlign..7 in values[0] are updated.
                                 ) {
-    QTextStream out(stdout);
-    out << "   PCD_ReadRegister N :reg=0x" << QString::number(reg,16) << " count=" << QString::number(count) << " rxAlign=" << QString::number(rxAlign) << endl;
     if (count == 0) {
         return;
     }
 
-    byte n=count;
-    byte addr = reg;
-
-    for(n=0 ; n!=count ; n++)
-    {
-        if((n==0) && (rxAlign!=0))// Only update bit positions rxAlign..7 in values[0]
-        {
-            // Create bit mask for bit positions rxAlign..7
-            byte mask = 0;
-            for (byte i = rxAlign; i <= 7; i++) {
-                mask |= (1 << i);
-            }
-            // Apply mask to both current value of values[0] and the new data in value.
-            byte value = PCD_ReadRegister(addr);
-            values[0] = (values[0] & ~mask) | (value & mask);
+    byte *tx, *rx;
+    tx = new byte[count+1];
+    rx = new byte[count+1];
+    memset(tx,0x80 | (reg & 0x7E) , count);
+    tx[count]= 0;
+    //the las byte in tx is 0 to end the transfer
+    //the first byte in rx is dont-care value.
+    transfer(spiFd,tx,rx,count+1);
+    if(rxAlign) {
+        // Create bit mask for bit positions rxAlign..7
+        byte mask = 0;
+        for (byte i = rxAlign; i <= 7; i++) {
+            mask |= (1 << i);
         }
-        else  values[n] = PCD_ReadRegister(addr);
-        //addr++;
+        // Apply mask to both current value of values[0] and the new data in value.
+        values[0] = (values[0] & ~mask) | (rx[1] & mask);
     }
-    out << "   PCD_ReadRegister N - END" << endl;
+    else {
+        values[0]= rx[1];
+    }
+    memcpy(&values[1], &rx[2], count-1);
+    delete[] tx;
+    delete[] rx;
 } // End PCD_ReadRegister()
 
 /**
@@ -143,12 +137,9 @@ void MFRC522::PCD_ReadRegister(	byte reg,		///< The register to read from. One o
 void MFRC522::PCD_SetRegisterBitMask(	byte reg,	///< The register to update. One of the PCD_Register enums.
                                         byte mask	///< The bits to set.
                                     ) {
-    QTextStream out(stdout);
-    out << "   PCD_SetRegisterBitMask:reg=0x" << QString::number(reg,16) << " mask=0x" << QString::number(mask,16) << endl;
     byte tmp;
     tmp = PCD_ReadRegister(reg);
     PCD_WriteRegister(reg, tmp | mask);			// set bit mask
-    out << "   PCD_SetRegisterBitMask --> END" << endl;
 } // End PCD_SetRegisterBitMask()
 
 /**
@@ -157,12 +148,9 @@ void MFRC522::PCD_SetRegisterBitMask(	byte reg,	///< The register to update. One
 void MFRC522::PCD_ClearRegisterBitMask(	byte reg,	///< The register to update. One of the PCD_Register enums.
                                         byte mask	///< The bits to clear.
                                       ) {
-    QTextStream out(stdout);
-    out << "   PCD_ClearRegisterBitMask:reg=0x" << QString::number(reg,16) << " mask=0x" << QString::number(mask,16) << endl;
     byte tmp;
     tmp = PCD_ReadRegister(reg);
     PCD_WriteRegister(reg, tmp & (~mask));		// clear bit mask
-    out << "   PCD_ClearRegisterBitMask --> END" << endl;
 } // End PCD_ClearRegisterBitMask()
 
 
@@ -175,8 +163,6 @@ byte MFRC522::PCD_CalculateCRC(	byte *data,		///< In: Pointer to the data to tra
                                 byte length,	///< In: The number of bytes to transfer.
                                 byte *result	///< Out: Pointer to result buffer. Result is written to result[0..1], low byte first.
                      ) {
-    QTextStream out(stdout);
-    out << "  PCD_CalculateCRC --> START" << endl;
 
     PCD_WriteRegister(CommandReg, PCD_Idle);			// Stop any active command.
     PCD_WriteRegister(DivIrqReg, 0x04);					// Clear the CRCIRq interrupt request bit
@@ -195,7 +181,6 @@ byte MFRC522::PCD_CalculateCRC(	byte *data,		///< In: Pointer to the data to tra
             break;
         }
         if(time.elapsed()>89) {						// The emergency break. We will eventually terminate on this one after 89ms. Communication with the MFRC522 might be down.
-            out << "  PCD_CalculateCRC --> END status=STATUS_TIMEOUT" << endl;
             return STATUS_TIMEOUT;
         }
     }
@@ -204,7 +189,6 @@ byte MFRC522::PCD_CalculateCRC(	byte *data,		///< In: Pointer to the data to tra
     // Transfer the result from the registers to the result buffer
     result[0] = PCD_ReadRegister(CRCResultRegL);
     result[1] = PCD_ReadRegister(CRCResultRegH);
-    out << "  PCD_CalculateCRC --> END status=STATUS_OK" << endl;
     return STATUS_OK;
 } // End PCD_CalculateCRC()
 
@@ -218,8 +202,6 @@ byte MFRC522::PCD_CalculateCRC(	byte *data,		///< In: Pointer to the data to tra
  */
 void MFRC522::PCD_Init()
 {
-    QTextStream out(stdout);
-    out << "PCD_Init --> START" << endl;
     // When communicating with a PICC we need a timeout if something goes wrong.
     // f_timer = 13.56 MHz / (2*TPreScaler+1) where TPreScaler = [TPrescaler_Hi:TPrescaler_Lo].
     // TPrescaler_Hi are the four low bits in TModeReg. TPrescaler_Lo is TPrescalerReg.
@@ -231,7 +213,6 @@ void MFRC522::PCD_Init()
     PCD_WriteRegister(TxASKReg, 0x40);		// Default 0x00. Force a 100 % ASK modulation independent of the ModGsPReg register setting
     PCD_WriteRegister(ModeReg, 0x3D);		// Default 0x3F. Set the preset value for the CRC coprocessor for the CalcCRC command to 0x6363 (ISO 14443-3 part 6.2.4)
     PCD_AntennaOn();						// Enable the antenna driver pins TX1 and TX2 (they were disabled by the reset)
-    out << "PCD_Init --> END" << endl;
 } // End PCD_Init()
 
 
@@ -258,14 +239,10 @@ void MFRC522::PCD_Reset()
  */
 void MFRC522::PCD_AntennaOn()
 {
-    QTextStream out(stdout);
-    out << "PCD_AntennaOn --> START" << endl;
-
     byte value = PCD_ReadRegister(TxControlReg);
     if ((value & 0x03) != 0x03) {
         PCD_WriteRegister(TxControlReg, value | 0x03);
     }
-    out << "PCD_AntennaOn --> END" << endl;
 }
 
 
@@ -289,7 +266,9 @@ byte MFRC522::PCD_TransceiveData(	byte *sendData,		///< Pointer to the data to t
                                     bool checkCRC		///< In: True => The last two bytes of the response is assumed to be a CRC_A that must be validated.
                                  ) {
     byte waitIRq = 0x30;		// RxIRq and IdleIRq
-    return PCD_CommunicateWithPICC(PCD_Transceive, waitIRq, sendData, sendLen, backData, backLen, validBits, rxAlign, checkCRC);
+
+    byte res = PCD_CommunicateWithPICC(PCD_Transceive, waitIRq, sendData, sendLen, backData, backLen, validBits, rxAlign, checkCRC);
+    return res;
 } // End PCD_TransceiveData()
 
 /**
@@ -308,9 +287,6 @@ byte MFRC522::PCD_CommunicateWithPICC(	byte command,		///< The command to execut
                                         byte rxAlign,		///< In: Defines the bit position in backData[0] for the first bit received. Default 0.
                                         bool checkCRC		///< In: True => The last two bytes of the response is assumed to be a CRC_A that must be validated.
                                      ) {
-
-    QTextStream out(stdout);
-    out << "PCD_CommunicateWithPICC --> START" << endl;
     byte n, _validBits;
 
     // Prepare values for BitFramingReg
@@ -330,6 +306,7 @@ byte MFRC522::PCD_CommunicateWithPICC(	byte command,		///< The command to execut
     // Wait for the command to complete.
     // In PCD_Init() we set the TAuto flag in TModeReg. This means the timer automatically starts when the PCD stops transmitting.
     // Each iteration of the do-while-loop takes 17.86µs.START
+
     QTime time;
     time.start();
     while (1) {
@@ -338,11 +315,9 @@ byte MFRC522::PCD_CommunicateWithPICC(	byte command,		///< The command to execut
             break;
         }
         if (n & 0x01) {						// Timer interrupt - nothing received in 25ms
-            out << "PCD_CommunicateWithPICC --> END - return Timeout - nothing received in 25ms" << endl;
             return STATUS_TIMEOUT;
         }
-        if (time.elapsed()>350) {						// The emergency break. If all other condions fail we will eventually terminate on this one after 35.7ms. Communication with the MFRC522 might be down.
-            out << "PCD_CommunicateWithPICC --> END - return Timeout - emergency break. time.elapsed=" << QString::number(time.elapsed()) << endl;
+        if (time.elapsed()>36) {						// The emergency break. If all other condions fail we will eventually terminate on this one after 35.7ms. Communication with the MFRC522 might be down.
             return STATUS_TIMEOUT;
         }
     }
@@ -438,6 +413,7 @@ byte MFRC522::PICC_REQA_or_WUPA(	byte command, 		///< The command to send - PICC
     }
     PCD_ClearRegisterBitMask(CollReg, 0x80);			// ValuesAfterColl=1 => Bits received after collision are cleared.
     validBits = 7;										// For REQA and WUPA we need the short frame format - transmit only 7 bits of the last (and only) byte. TxLastBits = BitFramingReg[2..0]
+
     status = PCD_TransceiveData(&command, 1, bufferATQA, bufferSize, &validBits);
     if (status != STATUS_OK) {
         return status;
@@ -484,6 +460,7 @@ byte MFRC522::PICC_Select(	Uid *uid,			///< Pointer to Uid struct. Normally outp
     byte *responseBuffer;
     byte responseLength;
 
+
     // Description of buffer structure:
     // 		Byte 0: SEL 				Indicates the Cascade Level: PICC_CMD_SEL_CL1, PICC_CMD_SEL_CL2 or PICC_CMD_SEL_CL3
     // 		Byte 1: NVB					Number of Valid Bits (in complete command, not just the UID): High nibble: complete bytes, Low nibble: Extra bits.
@@ -516,6 +493,7 @@ byte MFRC522::PICC_Select(	Uid *uid,			///< Pointer to Uid struct. Normally outp
 
     // Repeat Cascade Level loop until we have a complete UID.
     uidComplete = false;
+
     while ( ! uidComplete) {
         // Set the Cascade Level in the SEL byte, find out if we need to use the Cascade Tag in byte 2.
         switch (cascadeLevel) {
@@ -572,12 +550,12 @@ byte MFRC522::PICC_Select(	Uid *uid,			///< Pointer to Uid struct. Normally outp
         while ( ! selectDone) {
             // Find out how many bits and bytes to send and receive.
             if (currentLevelKnownBits >= 32) { // All UID bits in this Cascade Level are known. This is a SELECT.
-                //Serial.print("SELECT: currentLevelKnownBits="); Serial.println(currentLevelKnownBits, DEC);
-                buffer[1] = 0x70; // NVB - Number of Valid Bits: Seven whole bytes
+                 buffer[1] = 0x70; // NVB - Number of Valid Bits: Seven whole bytes
                 // Calulate BCC - Block Check Character
                 buffer[6] = buffer[2] ^ buffer[3] ^ buffer[4] ^ buffer[5];
                 // Calculate CRC_A
                 result = PCD_CalculateCRC(buffer, 7, &buffer[7]);
+
                 if (result != STATUS_OK) {
                     return result;
                 }
@@ -604,7 +582,9 @@ byte MFRC522::PICC_Select(	Uid *uid,			///< Pointer to Uid struct. Normally outp
             PCD_WriteRegister(BitFramingReg, (rxAlign << 4) + txLastBits);	// RxAlign = BitFramingReg[6..4]. TxLastBits = BitFramingReg[2..0]
 
             // Transmit the buffer and receive the response.
+//---------------------------------------
             result = PCD_TransceiveData(buffer, bufferUsed, responseBuffer, &responseLength, &txLastBits, rxAlign);
+
             if (result == STATUS_COLLISION) { // More than one PICC in the field => collision.
                 result = PCD_ReadRegister(CollReg); // CollReg[7..0] bits are: ValuesAfterColl reserved CollPosNotValid CollPos[4:0]
                 if (result & 0x20) { // CollPosNotValid
@@ -698,7 +678,9 @@ byte MFRC522::PICC_HaltA() {
     //		If the PICC responds with any modulation during a period of 1 ms after the end of the frame containing the
     //		HLTA command, this response shall be interpreted as 'not acknowledge'.
     // We interpret that this way: Only STATUS_TIMEOUT is an success.
+//---------------------------------------
     result = PCD_TransceiveData(buffer, sizeof(buffer), NULL, 0);
+
     if (result == STATUS_TIMEOUT) {
         return STATUS_OK;
     }
@@ -720,15 +702,9 @@ byte MFRC522::PICC_HaltA() {
  * @return bool
  */
 bool MFRC522::PICC_IsNewCardPresent() {
-
-    QTextStream out(stdout);
-    out << "PICC_IsNewCardPresent --> START" << endl;
-
     byte bufferATQA[2];
     byte bufferSize = sizeof(bufferATQA);
     byte result = PICC_RequestA(bufferATQA, &bufferSize);
-    out << ">>PICC_RequestA returned status=0x" << QString::number(result,16) << endl;
-    out << "PICC_IsNewCardPresent --> END" << endl;
     return (result == STATUS_OK || result == STATUS_COLLISION);
 } // End PICC_IsNewCardPresent()
 
