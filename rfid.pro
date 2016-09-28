@@ -6,7 +6,9 @@
 
 QT       += core
 QT       += network
+QT       += sql
 QT       -= gui
+
 
 TARGET = rfid
 CONFIG   += console
@@ -22,7 +24,9 @@ SOURCES += main.cpp \
     qserialdevice/src/abstractserial.cpp \
     worker.cpp \
     mfrc522.cpp \
-    buzThread.cpp
+    buzThread.cpp \
+    iniparser.cpp \
+    dictionary.cpp
 
 HEADERS += \
     qserialdevice/src/nativeserialengine.h \
@@ -32,7 +36,9 @@ HEADERS += \
     worker.h \
     mfrc522.h \
     buzThread.h \
-    definitions.h
+    definitions.h \
+    iniparser.h \
+    dictionary.h
 
 # За QSerialDevice
 DEPENDPATH += .
@@ -44,4 +50,5 @@ LIBS += -L"$$PWD/qserialdevice/src/release"
 
 OTHER_FILES += \
     setEnv.sh \
-    notes.txt
+    notes.txt \
+    sql.txt

@@ -1,0 +1,23 @@
+#opkg install sqlite3
+
+#sqlite3 data.db
+
+#table for system log messages
+CREATE TABLE log
+(
+   timeStamp DATETIME,
+   msg VARCHAR(80)
+);
+
+INSERT INTO log VALUES ('2012-11-24 10:10:10', 'POWER ON');
+INSERT INTO log VALUES ('2012-11-24 10:11:11', 'NTP SYNC OK');
+INSERT INTO log VALUES ('2012-11-24 10:12:12', 'LOST CONN TO SERVER');
+INSERT INTO log VALUES ('2012-11-24 10:12:12', 'RESTORED CONN TO SERVER');
+
+CREATE TABLE queue
+(
+    timeStamp DATETIME,
+    tag       VARCHAR(20)
+);
+
+select * from log where timeStamp >= '2012-11-20 17:41:47' and timeStamp <= '2012-11-28 17:43:05';
