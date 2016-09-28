@@ -21,7 +21,8 @@ SOURCES += main.cpp \
     qserialdevice/src/abstractserialengine.cpp \
     qserialdevice/src/abstractserial.cpp \
     worker.cpp \
-    mfrc522.cpp
+    mfrc522.cpp \
+    buzThread.cpp
 
 HEADERS += \
     qserialdevice/src/nativeserialengine.h \
@@ -29,7 +30,9 @@ HEADERS += \
     qserialdevice/src/abstractserialengine.h \
     qserialdevice/src/abstractserial.h \
     worker.h \
-    mfrc522.h
+    mfrc522.h \
+    buzThread.h \
+    definitions.h
 
 # За QSerialDevice
 DEPENDPATH += .
@@ -40,4 +43,5 @@ LIBS += -lqserialdevice
 LIBS += -L"$$PWD/qserialdevice/src/release"
 
 OTHER_FILES += \
-    setEnv.sh
+    setEnv.sh \
+    notes.txt

@@ -7,17 +7,33 @@ MFRC522::MFRC522(QObject *parent) :   QObject(parent)
 
 // setup spi params
     spiMode = 0; spiBits=8; spiSpeed=1000000;
-    if((spiFd=open(SPI_PATH, O_RDWR))<0) perror("ERR: SPI can't open device");
-    if(ioctl(spiFd,SPI_IOC_WR_MODE, &spiMode)==-1) perror("ERR: SPI cant set mode");
-    if(ioctl(spiFd,SPI_IOC_RD_MODE, &spiMode)==-1) perror("ERR: SPI cant get mode");
-    if(ioctl(spiFd,SPI_IOC_WR_BITS_PER_WORD, &spiBits)==-1) perror("ERR: SPI cant set bits");
-    if(ioctl(spiFd,SPI_IOC_RD_BITS_PER_WORD, &spiBits)==-1) perror("ERR: SPI cant get bits");
-    if(ioctl(spiFd,SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed)==-1) perror("ERR: SPI cant set speed");
-    if(ioctl(spiFd,SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed)==-1) perror("ERR: SPI cant get speed");
+    while ((spiFd=open(SPI_PATH, O_RDWR))<0)
+    {
+        perror("ERR: SPI can't open device");
+        usleep(100000);
+    }
+    while(ioctl(spiFd,SPI_IOC_WR_MODE, &spiMode)==-1) { perror("ERR: SPI cant set mode"); usleep(100000);}
+    while(ioctl(spiFd,SPI_IOC_RD_MODE, &spiMode)==-1) { perror("ERR: SPI cant get mode"); usleep(100000);}
+    while(ioctl(spiFd,SPI_IOC_WR_BITS_PER_WORD, &spiBits)==-1) { perror("ERR: SPI cant set bits"); usleep(100000);}
+    while(ioctl(spiFd,SPI_IOC_RD_BITS_PER_WORD, &spiBits)==-1) { perror("ERR: SPI cant get bits"); usleep(100000);}
+    while(ioctl(spiFd,SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed)==-1) { perror("ERR: SPI cant set speed"); usleep(100000);}
+    while(ioctl(spiFd,SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed)==-1) { perror("ERR: SPI cant get speed"); usleep(100000);}
 
     printf("SPI  mode=%d\r\n", spiMode);
     printf("SPI  bits=%d\r\n", spiBits);
     printf("SPI  speed=%d\r\n", spiSpeed);
+
+    //test SPI
+    byte tx[2], rx[2];
+    tx[0] = 0x80;
+    tx[1]=0;
+    int test=transfer(spiFd,tx,rx,2);
+    if(test<0) perror("CRASH!\r\n");
+}
+
+MFRC522::~MFRC522()
+{
+
 }
 
 int MFRC522::transfer(int fd, byte send[], byte receive[], int length)

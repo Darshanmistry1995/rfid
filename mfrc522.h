@@ -6,7 +6,7 @@
 
 #include <QTextStream>
 
-#define SPI_PATH "/dev/spidev1.0"
+#include "definitions.h"
 #include <sys/ioctl.h>
 #include <linux/spi/spidev.h>
 #include <fcntl.h>
@@ -19,6 +19,7 @@ class MFRC522 : public QObject
     Q_OBJECT
 public:
     explicit MFRC522(QObject *parent = 0);
+    ~MFRC522();
     int transfer(int fd, byte send[], byte receive[], int length);
 
 signals:
